@@ -1,0 +1,233 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: False
+  vars_files:
+    - "../configs/config.yml"
+
+  tasks:
+
+      - set_fact:
+          vpc_id: "{{ project.name }}-{{ platform }}"
+      - set_fact:
+          route_name: "{{ vpc_id }}"
+
+      # - name: create the custom VPC for the resources (Networking)
+      #   ec2_vpc_net:
+      #     name: "{{ vpc_id }}"
+      #     cidr_block: "{{ cidr_block }}"
+      #     region: "{{ region }}"
+      #     state: present
+    
+      # - name: Gather the vpc facts to proceed
+      #   import_tasks: get-vpc-facts.yml
+
+      # - name: associate subnet to the VPC
+      #   ec2_vpc_subnet:
+      #     state: present
+      #     vpc_id: "{{ vpc.id }}"
+      #     region: "{{ region }}"
+      #     cidr: "{{ subnet_cidr }}"
+      #     map_public: yes
+      #     resource_tags:
+      #       Name: "{{ subnet_name }}"
+      #   register: subnet
+  
+      # - name: create the IGW
+      #   ec2_vpc_igw:
+      #     vpc_id: "{{ vpc.id }}"
+      #     region: "{{ region }}"
+      #     state: "present"
+      #     tags:
+      #       Name: "{{ igw_name }}"
+      #   register: igw
+
+      # - name: Route the IGW in order to provide the access (Networking)
+      #   ec2_vpc_route_table:
+      #     vpc_id: "{{ vpc.id }}"
+      #     region: "{{ region }}"
+      #     subnets:
+      #       - "{{ subnet.subnet.id }}"
+      #     routes:
+      #       - dest: 0.0.0.0/0
+      #         gateway_id: "{{ igw.gateway_id  }}"
+      #     tags:
+      #       Name: "{{ route_name }}"
+      
+      # # update the CIDR address in the SSH port section.
+      
+      # - name: Create Security Group
+      #   ec2_group:
+      #     name: Web DMZ
+      #     description: DMZ Security Group
+      #     vpc_id: "{{ vpc.id }}"
+      #     region: "{{ region }}"
+      #     rules:
+      #       - proto: tcp
+      #         ports:
+      #         - 80
+      #         cidr_ip: 0.0.0.0/0
+      #       - proto: tcp
+      #         ports:
+      #         - 22
+      #         cidr_ip: 0.0.0.0/0
+      #   register: security_group
+
+      # - name: create a new ec2 key pair to be used for accessing the new ec2 instances
+      #   ec2_key:
+      #     name: ec2_keypair
+      #     region: "{{ region }}"
+      #   register: keypair
+      
+      # - name: Copy EC2 Private Key locally so it can be later on used to SSH into the instance
+      #   copy: content="{{ keypair.key.private_key }}" dest={{ ec2_key_directory }}ec2_keypair.pem
+      #   when: keypair.changed == true
+
+      # - name: Chmod 0400 for the ssh keys
+      #   shell: "chmod 0400 {{ ec2_key_directory }}ec2_keypair.pem"
+
+      # - name: Gather the ami details dynamically
+      #   import_tasks: get-ec2-ami.yml
+
+      # - name: Create EC2 server
+      #   ec2:
+      #     image: "{{ ec2_ami }}"
+      #     wait: yes
+      #     instance_type: t2.micro
+      #     region: "{{ region }}"
+      #     group_id: "{{ security_group.group_id }}"
+      #     vpc_subnet_id: "{{ subnet.subnet.id }}"
+      #     key_name: "{{ keypair.key.name  }}"
+      #     count_tag:
+      #       Name: "{{ vpc_id }}-webserver"
+      #     exact_count: 1
+      #     instance_tags:
+      #       Name: "{{ vpc_id }}-webserver"
+
+      # - name: EC2 provision | Wait for EC2 SSH servers finish the initialization
+      #   pause: seconds=120 prompt="Waiting for the EC2 SSH servers initialization"
+
+      # - Name: "Get the public dns name of the newly created ec2 instance"
+      #   shell: aws ec2 describe-instances --filters "Name=tag:Name,Values={{ vpc_id }}-webserver" --output text --query 'Reservations[*].Instances[*].[PublicDnsName,Tags[?Key==`Application`].Value]'
+      #   register: ec2_fact_dns
+
+      # - set_fact:
+      #     ec2_dns_name: "{{ ec2_fact_dns.stdout }}"
+
+      # - debug:
+      #     msg: "{{ ec2_dns_name }}"
+
+      # - name: Write ec2 dynamic inventory file
+      #   template:
+      #     src: "inventory.j2"
+      #     dest: "/tmp/inventory"
+
+- hosts: webserver
+  vars_files:
+    - "../configs/config.yml"
+  vars:
+    ansible_ssh_private_key_file: "{{ ssh_key_file }}"
+  become: yes
+  tasks:
+
+      - name: ec2_instance | system update
+        yum: name=* state=latest update_cache=yes
+
+      - name: ec2_instance | yum install ntp
+        yum:
+          name: ntp
+          state: latest
+          update_cache: yes
+
+      - name: system update
+        yum: name=* state=latest update_cache=yes
+
+      - name: Install the epel release package
+        shell: amazon-linux-extras install -y epel
+
+      - name: yum install docker, pip, Nginx, and firewalld
+        shell: yum upate -y && yum install -y {{ item }}
+        with_items:
+          - docker
+          - python2-pip
+          - java
+          - firewalld
+          - nginx
+
+      - name: pip Install docker-py
+        pip:
+          name: docker-py
+          state: present
+        ignore_errors: yes
+
+      - name: enable docker to run as a service
+        service: name=docker state=started enabled=yes
+        with_items:
+          - firewalld
+          - docker
+
+      - name: Enable the services we installed
+        command: '{{ item }}'
+        with_items:
+          - systemctl enable firewalld
+          - systemctl enable docker
+          - systemctl enable nginx
+
+      - name: Start the firewalld and docker services
+        service: name='{{ item }}' state=restarted
+        with_items:
+          - firewalld
+          - docker
+
+      - name: Open the firewall
+        command: '{{ item }}'
+        with_items:
+          - firewall-cmd --add-service=http 
+          - firewall-cmd --add-service=https
+          - firewall-cmd --runtime-to-permanent
+          - iptables -I INPUT -p tcp -m tcp --dport 80 -j ACCEPT
+          - iptables -I INPUT -p tcp -m tcp --dport 443 -j ACCEPT
+
+      - name: Delete the existing html files from NGINx
+        file:
+          state: absent
+          path: '/usr/share/nginx/html'
+        become: yes
+
+      - name: Delete the existing dir to be replaced with the new
+        shell: rm -rf /usr/share/nginx/html
+
+      - name: create sites-enabled folder in the nginx
+        file:
+          path: '{{ item }}'
+          recurse: yes
+          state: directory
+          owner: root
+          group: root
+          mode: 0775
+        with_items:
+          - /etc/ssl/private
+          - /etc/nginx/sites-enabled
+          - /etc/nginx/sites-available
+          - /usr/share/nginx/html
+
+      - name: Delete the old nginx.conf file
+        file:
+          path: "/etc/nginx/nginx.conf"
+          state: absent
+
+      - name: Copy the relevant nginx certificate files to its specific certificate directories
+        copy:
+          src: '{{ item.src }}'
+          dest: '{{ item.dest }}'
+          owner: root
+          group: root
+        with_items:
+          - { src: ../configs/nginx.conf , dest: /etc/nginx/nginx.conf }
+          - { src: ../sample-website/ , dest: /usr/share/nginx/html/ }
+
+      - name: restart the nginx service
+        service: name=nginx state=restarted
+        register: nginx_status
+
+      - debug: msg='{{ nginx_status }}'

@@ -1,0 +1,40 @@
+---
+# Use "make init-platform ENV_REPO=<enviromnent_repository>" command instead.
+version: "0.1"
+
+project:
+  name: "poc"
+
+platform: devops
+
+# AWS Account
+region: "ap-southeast-2"
+
+# VPC
+cidr_block: 10.10.0.0/24
+
+availability:
+  zones:
+    - "ap-southeast-2a"
+
+# Subnet
+subnet_name: "Poc Subnet"
+subnet_cidr: 10.10.0.0/26
+ 
+# Internet Gateway Name
+igw_name: "Traffic IGW"
+ 
+securitygroup_name: "Poc Security Group"
+ 
+ec2_tag: "pocServer"
+ 
+#The local path to which we would save our EC2 Private Key
+ec2_key_directory: "/tmp/"
+keypair_name: "ec2_key_pair"
+
+ec2:
+  ami:
+    owner: "137112412989" 
+    filter: "amzn2-ami-hvm-2.0.*-x86_64-gp2"
+
+ssh_key_file: /tmp/ec2_keypair.pem

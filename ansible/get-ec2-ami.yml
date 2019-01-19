@@ -1,0 +1,19 @@
+---
+
+- name: "Get the AMI IDs for ec2 instance dynamically"
+  ec2_ami_facts:
+    owner: "{{ ec2.ami.owner }}"
+    region: "{{ region }}"
+    filters:
+      name: "{{ ec2.ami.filter }}" 
+  register: amis
+
+- name: Find the latest ami image to be able to create an ec2 instance
+  set_fact:
+    latest_ami={{ amis.images | sort(attribute='creation_date') | last }}
+
+- name: set the ami id 
+  set_fact:
+    ec2_ami={{ latest_ami.image_id }}
+
+- debug: var=ec2_ami
