@@ -12,115 +12,115 @@
       - set_fact:
           route_name: "{{ vpc_id }}"
 
-      # - name: create the custom VPC for the resources (Networking)
-      #   ec2_vpc_net:
-      #     name: "{{ vpc_id }}"
-      #     cidr_block: "{{ cidr_block }}"
-      #     region: "{{ region }}"
-      #     state: present
+      - name: create the custom VPC for the resources (Networking)
+        ec2_vpc_net:
+          name: "{{ vpc_id }}"
+          cidr_block: "{{ cidr_block }}"
+          region: "{{ region }}"
+          state: present
     
-      # - name: Gather the vpc facts to proceed
-      #   import_tasks: get-vpc-facts.yml
+      - name: Gather the vpc facts to proceed
+        import_tasks: get-vpc-facts.yml
 
-      # - name: associate subnet to the VPC
-      #   ec2_vpc_subnet:
-      #     state: present
-      #     vpc_id: "{{ vpc.id }}"
-      #     region: "{{ region }}"
-      #     cidr: "{{ subnet_cidr }}"
-      #     map_public: yes
-      #     resource_tags:
-      #       Name: "{{ subnet_name }}"
-      #   register: subnet
+      - name: associate subnet to the VPC
+        ec2_vpc_subnet:
+          state: present
+          vpc_id: "{{ vpc.id }}"
+          region: "{{ region }}"
+          cidr: "{{ subnet_cidr }}"
+          map_public: yes
+          resource_tags:
+            Name: "{{ subnet_name }}"
+        register: subnet
   
-      # - name: create the IGW
-      #   ec2_vpc_igw:
-      #     vpc_id: "{{ vpc.id }}"
-      #     region: "{{ region }}"
-      #     state: "present"
-      #     tags:
-      #       Name: "{{ igw_name }}"
-      #   register: igw
+      - name: create the IGW
+        ec2_vpc_igw:
+          vpc_id: "{{ vpc.id }}"
+          region: "{{ region }}"
+          state: "present"
+          tags:
+            Name: "{{ igw_name }}"
+        register: igw
 
-      # - name: Route the IGW in order to provide the access (Networking)
-      #   ec2_vpc_route_table:
-      #     vpc_id: "{{ vpc.id }}"
-      #     region: "{{ region }}"
-      #     subnets:
-      #       - "{{ subnet.subnet.id }}"
-      #     routes:
-      #       - dest: 0.0.0.0/0
-      #         gateway_id: "{{ igw.gateway_id  }}"
-      #     tags:
-      #       Name: "{{ route_name }}"
+      - name: Route the IGW in order to provide the access (Networking)
+        ec2_vpc_route_table:
+          vpc_id: "{{ vpc.id }}"
+          region: "{{ region }}"
+          subnets:
+            - "{{ subnet.subnet.id }}"
+          routes:
+            - dest: 0.0.0.0/0
+              gateway_id: "{{ igw.gateway_id  }}"
+          tags:
+            Name: "{{ route_name }}"
       
-      # # update the CIDR address in the SSH port section.
+      # update the CIDR address in the SSH port section.
       
-      # - name: Create Security Group
-      #   ec2_group:
-      #     name: Web DMZ
-      #     description: DMZ Security Group
-      #     vpc_id: "{{ vpc.id }}"
-      #     region: "{{ region }}"
-      #     rules:
-      #       - proto: tcp
-      #         ports:
-      #         - 80
-      #         cidr_ip: 0.0.0.0/0
-      #       - proto: tcp
-      #         ports:
-      #         - 22
-      #         cidr_ip: 0.0.0.0/0
-      #   register: security_group
+      - name: Create Security Group
+        ec2_group:
+          name: Web DMZ
+          description: DMZ Security Group
+          vpc_id: "{{ vpc.id }}"
+          region: "{{ region }}"
+          rules:
+            - proto: tcp
+              ports:
+              - 80
+              cidr_ip: 0.0.0.0/0
+            - proto: tcp
+              ports:
+              - 22
+              cidr_ip: 0.0.0.0/0
+        register: security_group
 
-      # - name: create a new ec2 key pair to be used for accessing the new ec2 instances
-      #   ec2_key:
-      #     name: ec2_keypair
-      #     region: "{{ region }}"
-      #   register: keypair
+      - name: create a new ec2 key pair to be used for accessing the new ec2 instances
+        ec2_key:
+          name: ec2_keypair
+          region: "{{ region }}"
+        register: keypair
       
-      # - name: Copy EC2 Private Key locally so it can be later on used to SSH into the instance
-      #   copy: content="{{ keypair.key.private_key }}" dest={{ ec2_key_directory }}ec2_keypair.pem
-      #   when: keypair.changed == true
+      - name: Copy EC2 Private Key locally so it can be later on used to SSH into the instance
+        copy: content="{{ keypair.key.private_key }}" dest={{ ec2_key_directory }}ec2_keypair.pem
+        when: keypair.changed == true
 
-      # - name: Chmod 0400 for the ssh keys
-      #   shell: "chmod 0400 {{ ec2_key_directory }}ec2_keypair.pem"
+      - name: Chmod 0400 for the ssh keys
+        shell: "chmod 0400 {{ ec2_key_directory }}ec2_keypair.pem"
 
-      # - name: Gather the ami details dynamically
-      #   import_tasks: get-ec2-ami.yml
+      - name: Gather the ami details dynamically
+        import_tasks: get-ec2-ami.yml
 
-      # - name: Create EC2 server
-      #   ec2:
-      #     image: "{{ ec2_ami }}"
-      #     wait: yes
-      #     instance_type: t2.micro
-      #     region: "{{ region }}"
-      #     group_id: "{{ security_group.group_id }}"
-      #     vpc_subnet_id: "{{ subnet.subnet.id }}"
-      #     key_name: "{{ keypair.key.name  }}"
-      #     count_tag:
-      #       Name: "{{ vpc_id }}-webserver"
-      #     exact_count: 1
-      #     instance_tags:
-      #       Name: "{{ vpc_id }}-webserver"
+      - name: Create EC2 server
+        ec2:
+          image: "{{ ec2_ami }}"
+          wait: yes
+          instance_type: t2.micro
+          region: "{{ region }}"
+          group_id: "{{ security_group.group_id }}"
+          vpc_subnet_id: "{{ subnet.subnet.id }}"
+          key_name: "{{ keypair.key.name  }}"
+          count_tag:
+            Name: "{{ vpc_id }}-webserver"
+          exact_count: 1
+          instance_tags:
+            Name: "{{ vpc_id }}-webserver"
 
-      # - name: EC2 provision | Wait for EC2 SSH servers finish the initialization
-      #   pause: seconds=120 prompt="Waiting for the EC2 SSH servers initialization"
+      - name: EC2 provision | Wait for EC2 SSH servers finish the initialization
+        pause: seconds=120 prompt="Waiting for the EC2 SSH servers initialization"
 
-      # - Name: "Get the public dns name of the newly created ec2 instance"
-      #   shell: aws ec2 describe-instances --filters "Name=tag:Name,Values={{ vpc_id }}-webserver" --output text --query 'Reservations[*].Instances[*].[PublicDnsName,Tags[?Key==`Application`].Value]'
-      #   register: ec2_fact_dns
+      - Name: "Get the public dns name of the newly created ec2 instance"
+        shell: aws ec2 describe-instances --filters "Name=tag:Name,Values={{ vpc_id }}-webserver" --output text --query 'Reservations[*].Instances[*].[PublicDnsName,Tags[?Key==`Application`].Value]'
+        register: ec2_fact_dns
 
-      # - set_fact:
-      #     ec2_dns_name: "{{ ec2_fact_dns.stdout }}"
+      - set_fact:
+          ec2_dns_name: "{{ ec2_fact_dns.stdout }}"
 
-      # - debug:
-      #     msg: "{{ ec2_dns_name }}"
+      - debug:
+          msg: "{{ ec2_dns_name }}"
 
-      # - name: Write ec2 dynamic inventory file
-      #   template:
-      #     src: "inventory.j2"
-      #     dest: "/tmp/inventory"
+      - name: Write ec2 dynamic inventory file
+        template:
+          src: "inventory.j2"
+          dest: "/tmp/inventory"
 
 - hosts: webserver
   vars_files:
