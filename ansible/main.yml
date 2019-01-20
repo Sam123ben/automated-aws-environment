@@ -241,7 +241,7 @@
   tasks:
 
       - shell: mkdir ~/.aws
-        become: true
+        become: false
 
       - name: Copy the script from the local to the destination ec2 instance
         copy:
