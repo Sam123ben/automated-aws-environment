@@ -12,6 +12,84 @@
       - set_fact:
           route_name: "{{ vpc_id }}"
 
+      - name: getting epoch time from shell
+        command: "date +%s"
+        register: epoch_time
+
+      - name: set the current Epoch time fact
+        set_fact:
+          epoch: "{{ epoch_time.stdout }}"
+
+      - name: Ansible check if the the ssh config file exist
+        stat:
+          path: '~/.ssh/config'
+        register: check_config_file
+
+      - name: Ansible check if the the ansible config file exist
+        stat:
+          path: '~/.ssh/ansible.cfg'
+        register: check_ansible_config_file
+
+      - block:
+
+        - name: Have a backup of the current config file in case if present
+          copy:
+            src: '~/.ssh/ansible.cfg'
+            dest: '~/.ssh/ansible_config_backup_{{ epoch }}'
+
+        - name: Remove the existing config file
+          shell: rm -rf ~/.ssh/ansible.cfg
+
+        when: check_ansible_config_file.stat.exists
+
+      - name: Copy the config file to the ssh dir to avoid host check
+        copy:
+          src: '../configs/ansible.cfg'
+          dest: '~/.ssh/ansible.cfg'
+
+      - name: Export the ansible config file
+        shell: export ANSIBLE_CONFIG="~/.ssh/ansible.cfg"
+
+      - block:
+
+        - name: Have a backup of the current config file in case if present
+          copy:
+            src: '~/.ssh/config'
+            dest: '~/.ssh/config_backup_{{ epoch }}'
+
+        - name: Remove the existing config file
+          shell: rm -rf ~/.ssh/config
+
+        when: check_config_file.stat.exists
+
+      - name: Copy the config file to the ssh dir to avoid host check
+        copy:
+          src: '../configs/config'
+          dest: '~/.ssh/config'
+        mode: 0400
+
+      - name: Copy the policy template
+        copy:
+          src: './templates/iam_policy.json'
+          dest: '/tmp/iam_policy.json'
+
+      - name: Create an instance profile role for the ec2 to continue the kops installtion
+        shell: aws iam create-role --role-name ec2AdminRole-{{ epoch }} --assume-role-policy-document file:///tmp/iam_policy.json
+        register: instance_role
+
+      - name: Attach the aws policy to the ec2 instance role and create the iam policy accordingly
+        shell: "{{ item }}"
+        with_items:
+          - aws iam attach-role-policy --policy-arn arn:aws:iam::aws:policy/AdministratorAccess --role-name ec2AdminRole-{{ epoch }}
+          - aws iam create-instance-profile --instance-profile-name newEc2InstanceProfile-{{ epoch }}
+          - aws iam add-role-to-instance-profile --role-name ec2AdminRole-{{ epoch }} --instance-profile-name newEc2InstanceProfile-{{ epoch }}
+
+      - debug:
+          msg: "{{ instance_role.stdout }}"
+
+      - set_fact:
+          instance_profile_role: "{{ instance_role.stdout }}"
+
       - name: create the custom VPC for the resources (Networking)
         ec2_vpc_net:
           name: "{{ vpc_id }}"
@@ -73,6 +151,19 @@
               cidr_ip: 0.0.0.0/0
         register: security_group
 
+      - set_fact:
+          bucket_name: "poc-bucket-{{epoch}}"
+
+      - name: Create a policy document to be used acros by other resources to be able to download
+        template:
+          src: "admin_policy.json.j2"
+          dest: "/tmp/admin_policy.json"
+
+      # Create a simple s3 bucket
+      - s3_bucket:
+          name: '{{ bucket_name }}'
+          policy: "{{ lookup('file','/tmp/admin_policy.json') }}"
+
       - name: create a new ec2 key pair to be used for accessing the new ec2 instances
         ec2_key:
           name: ec2_keypair
@@ -111,6 +202,10 @@
         shell: aws ec2 describe-instances --filters "Name=tag:Name,Values={{ vpc_id }}-webserver" --output text --query 'Reservations[*].Instances[*].[PublicDnsName,Tags[?Key==`Application`].Value]'
         register: ec2_fact_dns
 
+      - Name: "Get the instance id of the newly created ec2 instance"
+        shell: aws ec2 describe-instances --filters "Name=tag:Name,Values={{ vpc_id }}-webserver" --output text --query 'Reservations[*].Instances[*].[InstanceId,Tags[?Key==`Application`].Value]'
+        register: ec2_fact_id
+
       - set_fact:
           ec2_dns_name: "{{ ec2_fact_dns.stdout }}"
 
@@ -122,37 +217,59 @@
           src: "inventory.j2"
           dest: "/tmp/inventory"
 
+      - name: Attach the iam profile to the newly created instance
+        shell: aws ec2 associate-iam-instance-profile --instance-id {{ ec2_fact_id.stdout }} --iam-instance-profile Name=newEc2InstanceProfile-{{ epoch }}
+        ignore_errors: true
+
+      - name: EC2 provision | Wait for EC2 SSH servers finish the initialization
+        pause: seconds=240 prompt="Waiting for the EC2 SSH servers initialization"
+
+      - name: Backup the configure for the aws to be used later
+        copy:
+          src: '{{ item.src }}'
+          dest: '{{ item.dest }}'
+        with_items:
+          - { src: ~/.aws/credentials, dest: /tmp/aws_credentials }
+
 - hosts: webserver
   vars_files:
     - "../configs/config.yml"
   vars:
     ansible_ssh_private_key_file: "{{ ssh_key_file }}"
   become: yes
+
   tasks:
 
+      - shell: mkdir ~/.aws
+
+      - name: Copy the script from the local to the destination ec2 instance
+        copy:
+          src: '{{ item.src }}'
+          dest: '{{ item.dest }}'
+        with_items:
+          - { src: ./templates/configure_k8s.sh, dest: /tmp/configure_k8s.sh }
+          - { src: /tmp/aws_credentials, dest: ~/.aws/credentials }
+        mode: 0777
+        become: false
+
       - name: ec2_instance | system update
-        yum: name=* state=latest update_cache=yes
-
-      - name: ec2_instance | yum install ntp
-        yum:
-          name: ntp
-          state: latest
-          update_cache: yes
-
-      - name: system update
         yum: name=* state=latest update_cache=yes
 
       - name: Install the epel release package
         shell: amazon-linux-extras install -y epel
 
-      - name: yum install docker, pip, Nginx, and firewalld
-        shell: yum upate -y && yum install -y {{ item }}
+      - name: ec2_instance | yum install packages
+        yum:
+          name: "{{ item }}"
+          state: latest
+          update_cache: yes
         with_items:
+          - ntp
           - docker
           - python2-pip
           - java
           - firewalld
-          - nginx
+          - bash-completion
 
       - name: pip Install docker-py
         pip:
@@ -171,7 +288,6 @@
         with_items:
           - systemctl enable firewalld
           - systemctl enable docker
-          - systemctl enable nginx
 
       - name: Start the firewalld and docker services
         service: name='{{ item }}' state=restarted
@@ -188,46 +304,72 @@
           - iptables -I INPUT -p tcp -m tcp --dport 80 -j ACCEPT
           - iptables -I INPUT -p tcp -m tcp --dport 443 -j ACCEPT
 
-      - name: Delete the existing html files from NGINx
-        file:
-          state: absent
-          path: '/usr/share/nginx/html'
-        become: yes
+########## INSTALL AND CONFIGURE KUBERNETES SINGLE NODE CLUSTER
 
-      - name: Delete the existing dir to be replaced with the new
-        shell: rm -rf /usr/share/nginx/html
-
-      - name: create sites-enabled folder in the nginx
-        file:
-          path: '{{ item }}'
-          recurse: yes
-          state: directory
-          owner: root
-          group: root
-          mode: 0775
+      - name: Install the awscli packages via pip and other kubernetes updates
+        shell: '{{ item }}'
         with_items:
-          - /etc/ssl/private
-          - /etc/nginx/sites-enabled
-          - /etc/nginx/sites-available
-          - /usr/share/nginx/html
+          - pip install awscli --upgrade --user
 
-      - name: Delete the old nginx.conf file
-        file:
-          path: "/etc/nginx/nginx.conf"
-          state: absent
+      - name: Run the shell script to install and configure the k8s
+        shell: sh /tmp/configure_k8s.sh {{ cluster_name }} {{ region }} poc-bucket-1547962512 {{ availability.zones }}
 
-      - name: Copy the relevant nginx certificate files to its specific certificate directories
+      - name: EC2 provision | Wait for EC2 SSH servers finish the initialization
+        pause: seconds=180 prompt="Waiting for the kubernetes cluster to be ready"
+
+      - name: Install the kubernetes dashboard
+        shell: kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v1.10.1/src/deploy/recommended/kubernetes-dashboard.yaml
+
+      - name: Get the secret or the password for accessing the dashboard apis
+        shell: /usr/local/bin/kops get secrets kube --type secret -oplaintext
+        register: get_secret
+        environment:
+          KOPS_CLUSTER_NAME: "{{ cluster_name }}.k8s.local"
+          KOPS_STATE_STORE: s3://poc-bucket-1547953032
+
+      - debug:
+          msg: 'The secret for accesing the kubernetes apis are: {{ get_secret.stdout }}'
+
+      - name: copy the kubernetes nginx sample demo app to test the functionality
         copy:
           src: '{{ item.src }}'
           dest: '{{ item.dest }}'
-          owner: root
-          group: root
         with_items:
-          - { src: ../configs/nginx.conf , dest: /etc/nginx/nginx.conf }
-          - { src: ../sample-website/ , dest: /usr/share/nginx/html/ }
+          - { src: ../kubernets-resources/backend-resources.yml , dest: /tmp/backend.yml }
+          - { src: ../kubernets-resources/frontend-resources.yml , dest: /tmp/frontend.yml }
 
-      - name: restart the nginx service
-        service: name=nginx state=restarted
-        register: nginx_status
+      - name: Install and configure nginx application
+        shell: "{{ item }}"
+        with_items:
+          - kubectl apply -f /tmp/backend.yml
+          - kubectl apply -f /tmp/frontend.yml
 
-      - debug: msg='{{ nginx_status }}'
+      - name: Kubernetes provision | Wait for resources to finish the initialization
+        pause: seconds=120 prompt="Waiting for the kubernetes resources to be ready"
+
+      - Name: "Get the instance id of the newly created ec2 instance attached to as worker"
+        shell: aws ec2 describe-instances --filters "Name=tag:KubernetesCluster,Values={{ cluster_name }}.k8s.local" --output text --query 'Reservations[*].Instances[*].[InstanceId,Tags[?Key==`Application`].Value]'
+        register: ec2_fact_id
+
+      - name: Fetch the elb dns name from the newly created extrenal IP
+        shell: aws elb describe-load-balancers --output text --query 'LoadBalancerDescriptions[?Instances[?InstanceId==`{{ ec2_fact_id }}`]].[CanonicalHostedZoneName]'
+        register: elb_dns_name
+
+      - name: Check if the application is working
+        shell: curl http://{{ elb_dns_name }}
+        register: check_op
+
+      - debug:
+          msg: "{{ check_op.stdout }}"
+
+- hosts: localhost
+  connection: local
+  gather_facts: False
+  vars_files:
+    - "../configs/config.yml"
+
+  tasks:
+
+      - name: Create a result file in the current dir to ensure the result of the implementation
+        command: echo "Successfully created a backend service with Nginx as the proxy" > ./result_{{ epoch }}
+        when: check_op.stdout | regex_search('{"message":"Hello"}')

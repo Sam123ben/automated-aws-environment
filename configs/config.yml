@@ -38,3 +38,5 @@ ec2:
     filter: "amzn2-ami-hvm-2.0.*-x86_64-gp2"
 
 ssh_key_file: /tmp/ec2_keypair.pem
+
+cluster_name: samyak
