@@ -18,7 +18,7 @@
 
       - name: set the current Epoch time fact
         set_fact:
-          epoch: "{{ epoch_time.stdout }}"
+          epoch_time: "{{ epoch_time.stdout }}"
 
       - name: Ansible check if the the ssh config file exist
         stat:
@@ -35,7 +35,7 @@
         - name: Have a backup of the current config file in case if present
           copy:
             src: '~/.ssh/ansible.cfg'
-            dest: '~/.ssh/ansible_config_backup_{{ epoch }}'
+            dest: '~/.ssh/ansible_config_backup_{{ epoch_time }}'
 
         - name: Remove the existing config file
           shell: rm -rf ~/.ssh/ansible.cfg
@@ -55,7 +55,7 @@
         - name: Have a backup of the current config file in case if present
           copy:
             src: '~/.ssh/config'
-            dest: '~/.ssh/config_backup_{{ epoch }}'
+            dest: '~/.ssh/config_backup_{{ epoch_time }}'
 
         - name: Remove the existing config file
           shell: rm -rf ~/.ssh/config
@@ -74,15 +74,15 @@
           dest: '/tmp/iam_policy.json'
 
       - name: Create an instance profile role for the ec2 to continue the kops installtion
-        shell: aws iam create-role --role-name ec2AdminRole-{{ epoch }} --assume-role-policy-document file:///tmp/iam_policy.json
+        shell: aws iam create-role --role-name ec2AdminRole-{{ epoch_time }} --assume-role-policy-document file:///tmp/iam_policy.json
         register: instance_role
 
       - name: Attach the aws policy to the ec2 instance role and create the iam policy accordingly
         shell: "{{ item }}"
         with_items:
-          - aws iam attach-role-policy --policy-arn arn:aws:iam::aws:policy/AdministratorAccess --role-name ec2AdminRole-{{ epoch }}
-          - aws iam create-instance-profile --instance-profile-name newEc2InstanceProfile-{{ epoch }}
-          - aws iam add-role-to-instance-profile --role-name ec2AdminRole-{{ epoch }} --instance-profile-name newEc2InstanceProfile-{{ epoch }}
+          - aws iam attach-role-policy --policy-arn arn:aws:iam::aws:policy/AdministratorAccess --role-name ec2AdminRole-{{ epoch_time }}
+          - aws iam create-instance-profile --instance-profile-name newEc2InstanceProfile-{{ epoch_time }}
+          - aws iam add-role-to-instance-profile --role-name ec2AdminRole-{{ epoch_time }} --instance-profile-name newEc2InstanceProfile-{{ epoch_time }}
 
       - debug:
           msg: "{{ instance_role.stdout }}"
@@ -152,7 +152,7 @@
         register: security_group
 
       - set_fact:
-          bucket_name: "poc-bucket-{{epoch}}"
+          bucket_name: "poc-bucket-{{ vpc_id }}"
 
       - name: Create a policy document to be used acros by other resources to be able to download
         template:
@@ -218,7 +218,7 @@
           dest: "/tmp/inventory"
 
       - name: Attach the iam profile to the newly created instance
-        shell: aws ec2 associate-iam-instance-profile --instance-id {{ ec2_fact_id.stdout }} --iam-instance-profile Name=newEc2InstanceProfile-{{ epoch }}
+        shell: aws ec2 associate-iam-instance-profile --instance-id {{ ec2_fact_id.stdout }} --iam-instance-profile Name=newEc2InstanceProfile-{{ epoch_time }}
         ignore_errors: true
 
       - name: EC2 provision | Wait for EC2 SSH servers finish the initialization
@@ -240,15 +240,19 @@
 
   tasks:
 
-      - shell: mkdir ~/.aws
+      - name: Creates a temp directory
+        file:
+          path: ~/.aws
+          state: directory
+          recurse: yes
         become: false
 
       - name: Copy the script from the local to the destination ec2 instance
-        copy:
+        template:
           src: '{{ item.src }}'
           dest: '{{ item.dest }}'
         with_items:
-          - { src: ./templates/configure_k8s.sh, dest: /tmp/configure_k8s.sh }
+          - { src: ./templates/configure_k8s.sh.j2, dest: /tmp/configure_k8s.sh }
           - { src: /tmp/aws_credentials, dest: ~/.aws/credentials }
         mode: 0777
         become: false
@@ -313,7 +317,7 @@
           - pip install awscli --upgrade --user
 
       - name: Run the shell script to install and configure the k8s
-        shell: sh /tmp/configure_k8s.sh {{ cluster_name }} {{ region }} poc-bucket-{{ epoch }} {{ availability.zones }}
+        shell: sh /tmp/configure_k8s.sh {{ cluster_name }} {{ region }} {{ availability.zones }}
         become: false
 
       - name: EC2 provision | Wait for EC2 SSH servers finish the initialization
@@ -327,7 +331,7 @@
         register: get_secret
         environment:
           KOPS_CLUSTER_NAME: "{{ cluster_name }}.k8s.local"
-          KOPS_STATE_STORE: s3://poc-bucket-1547953032
+          KOPS_STATE_STORE: s3://poc-bucket-{{ vpc_id }}
 
       - debug:
           msg: 'The secret for accesing the kubernetes apis are: {{ get_secret.stdout }}'
@@ -373,5 +377,5 @@
   tasks:
 
       - name: Create a result file in the current dir to ensure the result of the implementation
-        command: echo "Successfully created a backend service with Nginx as the proxy" > ./result_{{ epoch }}
+        command: echo "Successfully created a backend service with Nginx as the proxy" > ./result_{{ epoch_time }}
         when: check_op.stdout | regex_search('{"message":"Hello"}')
