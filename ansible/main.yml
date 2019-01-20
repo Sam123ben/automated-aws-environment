@@ -312,7 +312,8 @@
           - pip install awscli --upgrade --user
 
       - name: Run the shell script to install and configure the k8s
-        shell: sh /tmp/configure_k8s.sh {{ cluster_name }} {{ region }} poc-bucket-1547962512 {{ availability.zones }}
+        shell: sh /tmp/configure_k8s.sh {{ cluster_name }} {{ region }} poc-bucket-{{ epoch }} {{ availability.zones }}
+        become: false
 
       - name: EC2 provision | Wait for EC2 SSH servers finish the initialization
         pause: seconds=180 prompt="Waiting for the kubernetes cluster to be ready"
