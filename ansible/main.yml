@@ -180,7 +180,7 @@
       - name: Gather the ami details dynamically
         import_tasks: get-ec2-ami.yml
 
-      - name: Create EC2 server
+      - name: Create the EC2 instance
         ec2:
           image: "{{ ec2_ami }}"
           wait: yes
@@ -241,6 +241,7 @@
   tasks:
 
       - shell: mkdir ~/.aws
+        become: true
 
       - name: Copy the script from the local to the destination ec2 instance
         copy:
