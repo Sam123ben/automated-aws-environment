@@ -14,8 +14,7 @@ region: "ap-southeast-2"
 cidr_block: 10.10.0.0/24
 
 availability:
-  zones:
-    - "ap-southeast-2a"
+  zones: ap-southeast-2a
 
 # Subnet
 subnet_name: "Poc Subnet"

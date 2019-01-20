@@ -240,6 +240,9 @@
 
   tasks:
 
+      - set_fact:
+          vpc_id: "{{ project.name }}-{{ platform }}"
+
       - name: Creates a temp directory
         file:
           path: ~/.aws
@@ -317,7 +320,7 @@
           - pip install awscli --upgrade --user
 
       - name: Run the shell script to install and configure the k8s
-        shell: sh /tmp/configure_k8s.sh {{ cluster_name }} {{ region }} {{ availability.zones }}
+        shell: sh /tmp/configure_k8s.sh {{ cluster_name }} {{ region }} {{ availability.zone }}
         become: false
 
       - name: EC2 provision | Wait for EC2 SSH servers finish the initialization
