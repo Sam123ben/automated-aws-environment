@@ -13,7 +13,6 @@ curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.13.0/bin/l
 sudo chmod +x ./kubectl && sudo mv ./kubectl /usr/local/bin/kubectl
 export KOPS_CLUSTER_NAME="$cluster_name.k8s.local" && export KOPS_STATE_STORE=s3://poc-bucket-{{ vpc_id }}
 kops create secret --name $cluster_name.k8s.local sshpublickey admin -i ~/.ssh/authorized_keys
-kops create cluster --node-count=1 --node-size=t2.micro --zones=$region --name=$cluster_name.k8s.local
 
 kops create cluster --node-count=2 --node-size=t2.micro --zones=$availability_zone --name=$cluster_name.k8s.local
 
