@@ -1,0 +1,11 @@
+  - name: Creates a temp stat directory
+    file:
+      path: /tmp/stats
+      state: directory
+      recurse: yes
+
+  - name: Check the resource usage of the nginx docker container
+    shell: '{{ item }}'
+    with_items:
+      - docker ps -q | xargs  docker stats --no-stream > /tmp/stats/stat_resource_$(shuf -i 1-100 -n 1)
+      - sleep 10s

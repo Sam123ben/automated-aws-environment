@@ -1,0 +1,197 @@
+- hosts: webserver
+  vars_files:
+    - "../configs/config.yml"
+  vars:
+    ansible_ssh_private_key_file: "{{ ssh_key_file }}"
+  become: yes
+
+  tasks:
+
+      - set_fact:
+          vpc_id: "{{ project.name }}-{{ platform }}"
+
+      - name: Creates a temp directory
+        file:
+          path: ~/.aws
+          state: directory
+          recurse: yes
+
+      - name: Copy the script from the local to the destination ec2 instance
+        template:
+          src: '{{ item.src }}'
+          dest: '{{ item.dest }}'
+        with_items:
+          - { src: /tmp/aws_credentials, dest: ~/.aws/credentials }
+        mode: 0777
+
+      - name: ec2_instance | system update
+        yum: name=* state=latest update_cache=yes
+
+      - name: Install the epel release package
+        shell: amazon-linux-extras install -y epel
+
+      - name: ec2_instance | yum install packages
+        yum:
+          name: "{{ item }}"
+          state: latest
+          update_cache: yes
+        with_items:
+          - ntp
+          - docker
+          - python2-pip
+          - java
+          - firewalld
+          - bash-completion
+          - wget
+
+      - name: pip Install docker-py
+        pip:
+          name: docker-py
+          state: present
+        ignore_errors: yes
+
+      - name: enable docker to run as a service
+        service: name=docker state=restarted enabled=yes
+        with_items:
+          - firewalld
+          - docker
+
+      - name: Start the firewalld and docker services
+        service: name='{{ item }}' state=restarted
+        with_items:
+          - firewalld
+          - docker
+
+      - name: Open the firewall
+        command: '{{ item }}'
+        with_items:
+          - firewall-cmd --add-service=http 
+          - firewall-cmd --add-service=https
+          - firewall-cmd --runtime-to-permanent
+          - iptables -I INPUT -p tcp -m tcp --dport 80 -j ACCEPT
+          - iptables -I INPUT -p tcp -m tcp --dport 443 -j ACCEPT
+
+# # ########## INSTALL AND CONFIGURE KUBERNETES SINGLE NODE CLUSTER
+
+      - name: Install the awscli packages via pip and other kubernetes updates
+        shell: '{{ item }}'
+        with_items:
+          - pip install awscli --upgrade --user
+
+      - name: Run the docker and configure the Nginx docker container
+        shell: '{{ item }}'
+        with_items:
+          - docker run --name docker-nginx -p 80:80 -d nginx && sleep 10s
+
+      - name: Validate if the docker image is pulled
+        shell: docker images | grep nginx
+        register: nginx_image
+
+      - debug:
+          msg: '{{ nginx_image.stdout }} '
+
+      - name: Validate if the docker container is created
+        shell: docker ps -a
+        register: nginx_container
+
+      - debug:
+          msg: '{{ nginx_container.stdout }} '
+
+      - name: Download the web page of the nginx site
+        get_url:
+          url: http://localhost
+          dest: /tmp/nginx.html
+
+      - name: Check the readiness of the nginx container if running or not
+        shell: curl -s -o /dev/null -I -w '%{http_code}' http://localhost
+        register: return_code
+
+      - name: This task will be executed if the readiness is probe successfully
+        when: return_code.stdout == "200"
+        debug: msg="The readiness is successfull as the return code is {{ return_code.stdout }}"
+
+      - name: This task will be executed if the readiness is probe unsuccessfully
+        when: return_code.stdout == "0"
+        debug: msg="The readiness is unsuccessfull as the return code is {{ return_code.stdout }}"
+
+      - name: Remove the html tags from the web page we downloaded earlier and create files with the outputs we need to check later
+        shell: "{{ item }}"
+        with_items:
+          - sed -i 's/<[^>]*>//g' /tmp/nginx.html
+          - awk '{for(w=1;w<=NF;w++) print $w}' /tmp/nginx.html | sort | uniq -c | sort -nr > /tmp/check.txt
+          - sed -i 's/[0-9]//g' /tmp/check.txt && sed -i 's/[.,:{};]//g' /tmp/check.txt
+          - cat /tmp/check.txt | wc -w > /tmp/number_of_words
+          - sort /tmp/check.txt > /tmp/sort_words_file
+        when: return_code.stdout == "200"
+
+      - include_tasks: check-docker-reources.yml
+      - include_tasks: check-docker-reources.yml
+      - include_tasks: check-docker-reources.yml
+      - include_tasks: check-docker-reources.yml
+      - include_tasks: check-docker-reources.yml
+      - include_tasks: check-docker-reources.yml
+      - include_tasks: check-docker-reources.yml
+      - include_tasks: check-docker-reources.yml
+
+      - debug:
+          msg: "YOU WILL BE ABLE TO FIND THE DATA AND FILES RELATED LOGS FROM THE REMOTE EC2 INSTANCE /tmp/ DIR AND STATS UNDER /tmp/stat DIR"
+
+- hosts: localhost
+  connection: local
+  gather_facts: False
+  vars_files:
+    - "../configs/config.yml"
+
+  tasks:
+
+      - set_fact:
+          vpc_id: "{{ project.name }}-{{ platform }}"
+
+      - name: getting epoch time from shell
+        command: "date +%s"
+        register: epoch_time
+
+      - name: set the current Epoch time fact
+        set_fact:
+          epoch_time: "{{ epoch_time.stdout }}"
+
+      - Name: "Get the public dns name of the newly created ec2 instance"
+        shell: aws ec2 describe-instances --region {{ region }} --filters "Name=tag:Name,Values={{ vpc_id }}-webserver" --output text --query 'Reservations[*].Instances[*].[PublicDnsName,Tags[?Key==`Application`].Value]'
+        register: ec2_fact_dns
+
+      - set_fact:
+          ec2_dns_name: "{{ ec2_fact_dns.stdout }}"
+
+      - name: Check if the application is working
+        shell: curl http://{{ ec2_dns_name }}
+        register: check_op
+
+      - debug:
+          msg: '{{ check_op.stdout }}'
+
+      - name: Check the readiness of the nginx container if running or not
+        shell: curl -s -o /dev/null -I -w '%{http_code}' http://{{ ec2_dns_name }}
+        register: return_code
+
+      - name: This task will be executed if the readiness is probe successfully
+        when: return_code.stdout == "200"
+        debug: msg="The readiness is successfull as the return code is {{ return_code.stdout }}"
+
+      - name: This task will be executed if the readiness is probe unsuccessfully
+        when: return_code.stdout == "0"
+        debug: msg="The readiness is unsuccessfull as the return code is {{ return_code.stdout }}"
+
+      - name: Create a result file in the current dir to ensure the result of the implementation if it is successfull
+        command: '{{ item }}'
+        with_items:
+          - echo "Successfully checked the readiness of nginx on {{ ec2_dns_name }}" > /tmp/result_remote_{{ epoch_time }}
+        when: return_code.stdout == "200"
+
+      - name: Create a result file in the current dir to ensure the result of the implementation if unsuccessfull
+        command: '{{ item }}'
+        with_items:
+          - echo "Unsuccessfully checked the readiness of nginx on {{ ec2_dns_name }}" > /tmp/result_remote_{{ epoch_time }}
+        when: return_code.stdout == "0"
+
+      - debug:
+          msg: "YOU WILL BE ABLE TO FIND THE DATA AND FILES RELATED LOGS FROM THE REMOTE EC2 INSTANCE ({{ ec2_dns_name }}) /tmp/ DIR AND STATS UNDER /tmp/stat DIR"

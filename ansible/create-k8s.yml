@@ -1,0 +1,205 @@
+- hosts: webserver
+  vars_files:
+    - "../configs/config.yml"
+  vars:
+    ansible_ssh_private_key_file: "{{ ssh_key_file }}"
+  become: yes
+
+  tasks:
+
+      - set_fact:
+          vpc_id: "{{ project.name }}-{{ platform }}"
+
+      - name: Creates a temp directory
+        file:
+          path: ~/.aws
+          state: directory
+          recurse: yes
+
+      - name: Copy the kops master keys to access the cluster
+        copy:
+          src: '{{ item.src }}'
+          dest: '{{ item.dest }}'
+        with_items:
+          - { src: ./templates/id_rsa , dest: ~/.ssh/id_rsa }
+          - { src: ./templates/id_rsa.pub , dest: ~/.ssh/id_rsa.pub }
+        mode: 0400
+
+      - name: Copy the script from the local to the destination ec2 instance
+        template:
+          src: '{{ item.src }}'
+          dest: '{{ item.dest }}'
+        with_items:
+          - { src: /tmp/aws_credentials, dest: ~/.aws/credentials }
+        mode: 0777
+
+      - name: ec2_instance | system update
+        yum: name=* state=latest update_cache=yes
+
+      - name: Install the epel release package
+        shell: amazon-linux-extras install -y epel
+
+      - name: ec2_instance | yum install packages
+        yum:
+          name: "{{ item }}"
+          state: latest
+          update_cache: yes
+        with_items:
+          - ntp
+          - docker
+          - python2-pip
+          - java
+          - firewalld
+          - bash-completion
+
+      - name: pip Install docker-py
+        pip:
+          name: docker-py
+          state: present
+        ignore_errors: yes
+
+      - name: enable docker to run as a service
+        service: name=docker state=started enabled=yes
+        with_items:
+          - firewalld
+          - docker
+
+      - name: Start the firewalld and docker services
+        service: name='{{ item }}' state=restarted
+        with_items:
+          - firewalld
+          - docker
+
+      - name: Open the firewall
+        command: '{{ item }}'
+        with_items:
+          - firewall-cmd --add-service=http 
+          - firewall-cmd --add-service=https
+          - firewall-cmd --runtime-to-permanent
+          - iptables -I INPUT -p tcp -m tcp --dport 80 -j ACCEPT
+          - iptables -I INPUT -p tcp -m tcp --dport 443 -j ACCEPT
+
+# ########## INSTALL AND CONFIGURE KUBERNETES SINGLE NODE CLUSTER
+
+      - name: Install the awscli packages via pip and other kubernetes updates
+        shell: '{{ item }}'
+        with_items:
+          - pip install awscli --upgrade --user
+
+      - name: Run the shell script to install and configure the k8s
+        shell: "{{ item }}"
+        with_items:
+          - curl -LO https://github.com/kubernetes/kops/releases/download/$(curl -s https://api.github.com/repos/kubernetes/kops/releases/latest | grep tag_name | cut -d '"' -f 4)/kops-linux-amd64
+          - chmod +x kops-linux-amd64 && mv kops-linux-amd64 /usr/local/bin/kops
+          - curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.13.0/bin/linux/amd64/kubectl
+          - chmod +x ./kubectl && mv ./kubectl /usr/local/bin/kubectl
+          - export KOPS_CLUSTER_NAME={{ cluster_name }}.k8s.local && export KOPS_STATE_STORE=s3://poc-bucket-{{ vpc_id }} && /usr/local/bin/kops create cluster --node-count 1 --node-size t2.medium --zones {{ availability_zone }} --name {{ cluster_name }}.k8s.local --ssh-public-key ~/.ssh/id_rsa.pub --yes
+        environment:
+          KOPS_CLUSTER_NAME: "{{ cluster_name }}.k8s.local"
+          KOPS_STATE_STORE: s3://poc-bucket-{{ vpc_id }}          
+
+
+      - name: EC2 provision | Wait for EC2 SSH servers finish the initialization
+        pause: seconds=420 prompt="Waiting for the kubernetes cluster to be ready"
+
+      - name: Test if the kubernetes cluster is setup and completed
+        shell: /usr/local/bin/kubectl get ns
+        register: kubectl_check
+
+      - debug:
+          msg: "{{ kubectl_check.stdout }}"
+
+      # - name: Install the kubernetes dashboard
+      #   shell: /usr/local/bin/kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v1.10.1/src/deploy/recommended/kubernetes-dashboard.yaml
+
+      - name: Get the secret or the password for accessing the dashboard apis
+        shell: /usr/local/bin/kops get secrets kube --type secret -oplaintext
+        register: get_secret
+        environment:
+          KOPS_CLUSTER_NAME: "{{ cluster_name }}.k8s.local"
+          KOPS_STATE_STORE: s3://poc-bucket-{{ vpc_id }}
+
+      - debug:
+          msg: 'The secret for accesing the kubernetes apis are: {{ get_secret.stdout }}'
+
+      - name: copy the kubernetes nginx sample demo app to test the functionality
+        copy:
+          src: '{{ item.src }}'
+          dest: '{{ item.dest }}'
+        with_items:
+          - { src: ../kubernets-resources/backend-resources.yml , dest: /tmp/backend.yml }
+          - { src: ../kubernets-resources/frontend-resources.yml , dest: /tmp/frontend.yml }
+
+      - name: Install and configure nginx application
+        shell: "{{ item }}"
+        with_items:
+          - /usr/local/bin/kubectl apply -f /tmp/backend.yml
+          - sleep 10s
+          - /usr/local/bin/kubectl apply -f /tmp/frontend.yml
+
+      - name: Kubernetes provision | Wait for resources to finish the initialization
+        pause: seconds=120 prompt="Waiting for the kubernetes resources to be ready"
+
+      - Name: "Get the instance id of the newly created ec2 instance attached to as worker"
+        shell: aws ec2 describe-instances --region {{ region }} --filters "Name=tag:Name,Values=nodes.{{ cluster_name }}.k8s.local" --output text --query 'Reservations[*].Instances[*].[InstanceId,Tags[?Key==`Application`].Value]'
+        register: ec2_fact_id
+
+      - debug:
+          msg: '{{ ec2_fact_id.stdout }}'
+
+      - name: Fetch the elb dns name from the newly created extrenal IP
+        shell: aws elb describe-load-balancers --region {{ region }} --output text --query 'LoadBalancerDescriptions[?Instances[?InstanceId==`{{ ec2_fact_id.stdout }}`]].[CanonicalHostedZoneName]'
+        register: elb_dns_name
+
+      - debug:
+          msg: '{{ elb_dns_name.stdout }}'
+
+      - name: Check if the application is working
+        shell: curl http://{{ elb_dns_name.stdout }}
+        register: check_op
+
+      - debug:
+          msg: "The implementation was successful as I can ping the extrernal url created as part of the nginx frontend servcie and got a response: {{ check_op.stdout }}"
+
+- hosts: localhost
+  connection: local
+  gather_facts: False
+  vars_files:
+    - "../configs/config.yml"
+
+  tasks:
+
+      - name: getting epoch time from shell
+        command: "date +%s"
+        register: epoch_time
+
+      - name: set the current Epoch time fact
+        set_fact:
+          epoch_time: "{{ epoch_time.stdout }}"
+
+      - Name: "Get the instance id of the newly created ec2 instance attached to as worker"
+        shell: aws ec2 describe-instances --region {{ region }} --filters "Name=tag:Name,Values=nodes.{{ cluster_name }}.k8s.local" --output text --query 'Reservations[*].Instances[*].[InstanceId,Tags[?Key==`Application`].Value]'
+        register: ec2_fact_id
+
+      - debug:
+          msg: '{{ ec2_fact_id.stdout }}'
+
+      - name: Fetch the elb dns name from the newly created extrenal IP
+        shell: aws elb describe-load-balancers --region {{ region }} --output text --query 'LoadBalancerDescriptions[?Instances[?InstanceId==`{{ ec2_fact_id.stdout }}`]].[CanonicalHostedZoneName]'
+        register: elb_dns_name
+
+      - debug:
+          msg: '{{ elb_dns_name.stdout }}'
+
+      - name: Check if the application is working
+        shell: curl http://{{ elb_dns_name.stdout }}
+        register: check_op
+
+      - debug:
+          msg: '{{ check_op.stdout }}'
+
+      - name: Create a result file in the current dir to ensure the result of the implementation
+        command: '{{ item }}'
+        with_items:
+          - echo "Successfully created a backend service with Nginx as the proxy" > ./result_{{ epoch_time }} && sleep 10s
+        when: check_op.stdout | regex_search('{"message":"Hello"}')
