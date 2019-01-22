@@ -10,12 +10,14 @@ This repo holds the ansible playbooks and resources for creating an environment 
 
     shell script:
 
-        1. sh ./execute_nginx_automation.sh (This script will help you to automate the ec2 instance creation and the nginx docker container getting created)
+        1. sh ./bootstrap.sh (If the above pre reuired softwares are not installed then please run the bootstrap script to run those for you to install the same)
+
+        2. sh ./execute_nginx_automation.sh (This script will help you to automate the ec2 instance creation and the nginx docker container getting created)
 
         Once the ec2 instance is created you can login to the ec2 instance via below command:
         "ssh -i /tmp/ec2_keypair.pem ec2-user@<<ec2-host-address>>"
 
-        2. sh ./execute_k8s_automation.sh (This is an optional step, and this script will help you to automate the ec2 instance creation and the new fresh k8s cluster with nginx applicatin via kubernetes)
+        3. sh ./execute_k8s_automation.sh (This is an optional step, and this script will help you to automate the ec2 instance creation and the new fresh k8s cluster with nginx application along with a sample hello app running via kubernetes)
 
         Once the ec2 instance is created you can login to the ec2 instance via below command:
         "ssh -i /tmp/ec2_keypair.pem ec2-user@<<ec2-host-address>>"
