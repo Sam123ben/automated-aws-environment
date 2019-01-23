@@ -1,4 +1,4 @@
-# automnated-aws-environment
+# automated-aws-environment
 This repo holds the ansible playbooks and resources for creating an environment on aws from scratch with minimal aws resources
 
 #### Steps to create the nginx application or provision the k8s cluster ####
