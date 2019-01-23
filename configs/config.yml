@@ -3,9 +3,9 @@
 version: "0.1"
 
 project:
-  name: "poc"
+  name: "airwallex"
 
-platform: devops
+platform: devops-test
 
 # AWS Account
 region: "ap-southeast-2"
@@ -47,4 +47,4 @@ ec2:
 
 ssh_key_file: /tmp/ec2_keypair.pem
 
-cluster_name: samyak
+cluster_name: airwallex
