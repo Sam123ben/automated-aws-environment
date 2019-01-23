@@ -22,7 +22,7 @@ This repo holds the ansible playbooks and resources for creating an environment 
         Once the ec2 instance is created you can login to the ec2 instance via below command:
         "ssh -i /tmp/ec2_keypair.pem ec2-user@<<ec2-host-address>>"
 
-Once the kubernetes cluster are created, the user can ssh into the newly created ec2-instance and the do his testing of his own local k8s cluster ready to be played on using kops.
+Once the kubernetes cluster is created, the user can ssh into the newly created ec2-instance and the do his testing of his own local k8s cluster ready to be played on using kops.
 
 ####
 [root@ip-10-10-0-19 ~]# kubectl get ns
