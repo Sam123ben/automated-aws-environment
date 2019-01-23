@@ -1,6 +1,8 @@
 # automated-aws-environment
 This repo holds the ansible playbooks and resources for creating an environment on aws from scratch with minimal aws resources
 
+NOTE: For better seamless automation, I recommend you edit the config file (configs/config.yml) of your own choice to avoid any issues or conflcits related to s3 buckets or any other resources.
+
 #### Steps to create the nginx application or provision the k8s cluster ####
     Requirements before triggering the scripts to automate (Expecting the users are using Mac books and not or never been tested on Microsoft OS):
         1. Install the aws cli (Configure the aws credentials and ensure the credentials ar in your home dir .aws, Eg: ~/.aws/credentials)
