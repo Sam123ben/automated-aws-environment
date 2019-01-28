@@ -3,9 +3,9 @@
 version: "0.1"
 
 project:
-  name: "prod-client"
+  name: "client-production"
 
-platform: devops-test
+platform: "devops-platform"
 
 # AWS Account
 region: "ap-southeast-2"
@@ -47,4 +47,4 @@ ec2:
 
 ssh_key_file: /tmp/ec2_keypair.pem
 
-cluster_name: airwallex
+cluster_name: customer_name
